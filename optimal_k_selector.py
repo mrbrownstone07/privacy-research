@@ -15,11 +15,10 @@ Literature:
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import kneighbors_graph
 from scipy.linalg import eigh
-from typing import Tuple, Dict, List
+from typing import Dict
 import warnings
 
 
