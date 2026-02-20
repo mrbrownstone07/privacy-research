@@ -11,6 +11,9 @@ Determines the best k value for constructing k-NN graphs based on:
 Literature:
 - von Luxburg (2007): "A tutorial on spectral clustering"
 - Maier et al. (2009): "Optimal construction of k-nearest-neighbor graphs"
+
+Author: Mahdi Mohammad Shibli
+Date: 2026
 """
 
 import numpy as np

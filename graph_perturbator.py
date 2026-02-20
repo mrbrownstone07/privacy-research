@@ -30,10 +30,10 @@ Key Research References:
     Journal of the Optical Society of America, 38(2), 196-208.
     - Rose Criterion for SNR validation (adapted for data utility)
 
-Author: Research Implementation
-Date: 2025
+Author: Mahdi Mohammad Shibli
+Date: 2026
 """
-
+import warnings
 import numpy as np
 from typing import Dict, Optional
 from enum import Enum
@@ -921,9 +921,66 @@ class GraphLaplacianPerturbation:
 
         return validation_results
 
+    def _find_fiedler_pair(self, eigenvalues, eigenvectors, label, zero_tol=1e-10):
+        """
+        Find the first eigenpair whose eigenvalue is meaningfully
+        greater than zero, i.e. the true Fiedler pair.
+
+        In a connected graph this is simply index 1 (the second
+        smallest eigenvalue).  In a disconnected graph the first
+        k eigenvalues are zero (one per connected component), so
+        we skip those and warn the caller.
+
+        Args:
+            eigenvalues: Sorted eigenvalues from np.linalg.eigh
+            eigenvectors: Corresponding eigenvectors
+            label: 'original' or 'perturbed', used in warning messages
+
+        Returns:
+            (fiedler_value, fiedler_vector, num_zero_eigenvalues)
+
+        Raises:
+            ValueError: If no non-zero eigenvalue exists (e.g. all
+                        nodes are isolated or the matrix is trivial).
+        """
+        n = len(eigenvalues)
+        # Count the zero eigenvalues (one per connected component)
+        num_zero = 0
+        for val in eigenvalues:
+            if val < zero_tol:
+                num_zero += 1
+            else:
+                break
+
+        if num_zero > 1:
+            warnings.warn(
+                f"The {label} Laplacian has {num_zero} near-zero "
+                f"eigenvalues, indicating {num_zero} disconnected "
+                f"components. The standard Fiedler vector (index 1) "
+                f"is not meaningful; selecting the first non-trivial "
+                f"eigenvector at index {num_zero} instead.",
+                stacklevel=3,
+            )
+
+        # The Fiedler pair is the first eigenpair after the zero block
+        fiedler_idx = num_zero
+        if fiedler_idx >= n:
+            raise ValueError(
+                f"The {label} Laplacian has no non-zero eigenvalues. "
+                f"All nodes appear to be isolated or the matrix is "
+                f"trivially zero."
+            )
+
+        return (
+            eigenvalues[fiedler_idx],
+            eigenvectors[:, fiedler_idx],
+            num_zero,
+        )
+
     def compare_fiedler_vectors(self,
-                               original_L: np.ndarray,
-                               perturbed_L: np.ndarray) -> Dict:
+                                original_L: np.ndarray,
+                                perturbed_L: np.ndarray,
+                                zero_tol: float = 1e-10) -> Dict:
         """
         Compare Fiedler vectors (2nd eigenvectors) for clustering preservation.
 
@@ -949,6 +1006,8 @@ class GraphLaplacianPerturbation:
         Args:
             original_L: Original Laplacian
             perturbed_L: Perturbed Laplacian
+            zero_tol: Tolerance for considering an eigenvalue as zero
+                    (indicating disconnected components)
 
         Returns:
             Dictionary with Fiedler vector comparison metrics
@@ -957,30 +1016,43 @@ class GraphLaplacianPerturbation:
             [Fiedler 1973] "Algebraic connectivity of graphs"
             [Pothen 1990] "Partitioning Sparse Matrices with Eigenvectors"
         """
+        # ------------------------------------------------------------------
         # Compute eigenpairs (eigenvalues, eigenvectors)
+        # ------------------------------------------------------------------
         orig_vals, orig_vecs = np.linalg.eigh(original_L)
         pert_vals, pert_vecs = np.linalg.eigh(perturbed_L)
 
-        # Extract Fiedler eigenpair (2nd smallest eigenvalue)
-        orig_fiedler_val = orig_vals[1]
-        orig_fiedler_vec = orig_vecs[:, 1]
+        # ------------------------------------------------------------------
+        # Extract the true Fiedler eigenpair, skipping zero eigenvalues
+        # ------------------------------------------------------------------
+        orig_fiedler_val, orig_fiedler_vec, orig_num_zero = self._find_fiedler_pair(
+            orig_vals, orig_vecs, "original", zero_tol=zero_tol
+        )
+        pert_fiedler_val, pert_fiedler_vec, pert_num_zero = self._find_fiedler_pair(
+            pert_vals, pert_vecs, "perturbed", zero_tol=zero_tol
+        )
 
-        pert_fiedler_val = pert_vals[1]
-        pert_fiedler_vec = pert_vecs[:, 1]
-
+        # ------------------------------------------------------------------
         # Handle sign ambiguity (eigenvectors are unique up to sign)
+        # ------------------------------------------------------------------
         if np.dot(orig_fiedler_vec, pert_fiedler_vec) < 0:
             pert_fiedler_vec = -pert_fiedler_vec
 
+        # ------------------------------------------------------------------
         # Euclidean distance
+        # ------------------------------------------------------------------
         euclidean_dist = np.linalg.norm(orig_fiedler_vec - pert_fiedler_vec)
 
+        # ------------------------------------------------------------------
         # Cosine similarity: cos(θ) = (v₁·v₂) / (||v₁|| ||v₂||)
+        # ------------------------------------------------------------------
         cosine_sim = np.dot(orig_fiedler_vec, pert_fiedler_vec) / (
             np.linalg.norm(orig_fiedler_vec) * np.linalg.norm(pert_fiedler_vec)
         )
 
+        # ------------------------------------------------------------------
         # Sign agreement for binary partitioning
+        # ------------------------------------------------------------------
         orig_partition = orig_fiedler_vec >= 0
         pert_partition = pert_fiedler_vec >= 0
         partition_agreement = np.mean(orig_partition == pert_partition)
@@ -992,7 +1064,9 @@ class GraphLaplacianPerturbation:
             'vector_euclidean_distance': euclidean_dist,
             'vector_cosine_similarity': cosine_sim,
             'partition_agreement': partition_agreement,
-            'clustering_preserved': cosine_sim >= 0.9
+            'clustering_preserved': cosine_sim >= 0.9,
+            'original_connected_components': orig_num_zero,
+            'perturbed_connected_components': pert_num_zero,
         }
 
     # =========================================================================
